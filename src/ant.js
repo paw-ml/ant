@@ -465,22 +465,18 @@ class AntGroupsLine extends AntGroupsPlot {
             if (data == undefined) return;
             tooltip.style("display", null)
             var lineData = data[data.length - 1]
-            var domain = scaleX.domain(); 
+            var domain = scaleX.domain()
             var range = scaleX.range();
-            var rangePoints = d3.range(range[0], range[1], scaleX.step())
-            var xPos = domain[d3.bisect(rangePoints, d3.pointer(ev)[0])]; 
-            var yPos = domain[d3.bisect(rangePoints, xPos) -1];
-            const i = d3.bisect(rangePoints, d3.pointer(ev)[0]) - 1
-
-            const bisect = d3.bisector((d) => d[0]).center;
-            console.log( i)
-            //tooltip.attr("transform", `translate(${scaleX(xPos)},${scaleY(d3.pointer(ev)[1])})`)
+            var rangePoints = d3.range(range[0], range[1] + scaleX.step(), scaleX.step())
+            const x = d3.bisectCenter(rangePoints, d3.pointer(ev)[0])
+            const m = lineData.map((d) => d[0])
+            const i = m.indexOf(domain[x])
+            tooltip.attr("transform", `translate(${scaleX(lineData[i][0])},${scaleY(lineData[i][1])})`);
             me.emitEvent.apply(me, ['highlight', data.slice(0, -1).concat(lineData[i])])
             if ('callbacks' in me.config && 'plot_tooltip_callback' in me.source.dataset && me.source.dataset['plot_tooltip_callback'] in me.config.callbacks) {
                 
                 const cb = me.config.callbacks[me.source.dataset['plot_tooltip_callback']]
                 const labels = cb.apply(me, data.slice(0, -1).concat(lineData[i]))
-                tooltip.attr("transform", `translate(${scaleX(lineData[i][0])},${scaleY(lineData[i][1])})`);
 
                 const path = tooltip.selectAll("path")
                   .data([,])
