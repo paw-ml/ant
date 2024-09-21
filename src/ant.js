@@ -1,6 +1,17 @@
 //import * as d3 from "./d3.v7.min.js"
-import {Tabulator} from '../tabulator/js/tabulator_esm.min.mjs';
+import {Tabulator} from 'https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator_esm.min.mjs';
 import * as d3 from "https://cdn.skypack.dev/d3@7";
+d3.selection.prototype.attrs = function(map) {
+    const elm = this;
+    function cb(i, d) {
+        if (typeof map == 'function') {
+            map = {}
+        }
+        for (const name in map) elm.attr(name, map[name])
+    }
+    this.each(cb)
+    return this
+  }
 class AntEvents {
     events = {}
     addEventListener(me, event, cb) {
@@ -127,7 +138,8 @@ class AntGroupsPivot extends AntGroupsPlot {
                 const cb = this.config.callbacks[this.source.dataset['plot_tooltip_callback']]
             
                 for (var i in data[g][2]) {
-                    const labels = cb.apply(this, [data[g][0], data[g][1], data[g][2][i][0], data[g][2][i][1]])
+                    const elements = [[data[g][0], data[g][1], data[g][2][i][0], data[g][2][i][1]]]
+                    const labels = cb.apply(this, [elements])[0]
                     for (var l in labels.slice(0, -2)) {
                         obj[labels[l][0]] = labels[l][1]
                         if (cols.indexOf(labels[l][0]) === -1) {
@@ -190,15 +202,21 @@ class AntGroupsLabels extends AntGroupsPlot {
     handleHiglight(data) {
         if ('plot_tooltip_callback' in this.source.dataset) {
             const cb = this.config.callbacks[this.source.dataset['plot_tooltip_callback']]
-            const labels = cb.apply(this, data)
-            d3.select(this.container).selectAll('div')
-                .data(labels)
-                .join(
-                    enter => enter.append('div').html(d => d[0] + '<br/>' + d[1]),
-                    update => update.html(d => d[0] + '<br/>' + d[1])
-                )
+            const rows = cb.apply(this, data)
+            this.container.replaceChildren();
+            for (var r in rows) {
+                let div = document.createElement('DIV')
+                div.classList.add('element')
+                for (let l in rows[r]) {
+                    let label = document.createElement('DIV')
+                    label.classList.add('label')
+                    label.setHTMLUnsafe('<span>' + rows[r][l][0] + ':</span>' + rows[r][l][1])
+                    div.appendChild(label)
+                }
+                this.container.appendChild(div)
+            }
+
         }
-        //console.log(data)
     }
 }
 class AntGroupsCartesian extends AntGroupsPlot {
@@ -211,7 +229,7 @@ class AntGroupsCartesian extends AntGroupsPlot {
     config = null;
     constructor(source, container, svg, group, colorScale, config, eventsManager) {
         super(eventsManager)
-        this.addEventListener('highlight', this.handleHiglight)
+        this.addEventListener('highlight', this.handleHighlight)
         this.source = source
         this.group = group
         this.container = container
@@ -226,8 +244,12 @@ class AntGroupsCartesian extends AntGroupsPlot {
 
         this.plot(this.groupData())
     }
-    handleHiglight(data) {
-        //console.log('cartesian', data)
+    handleHighlight(data) {
+        this.svg.selectAll(".highlight").classed("highlight", false)
+        console.log(data[0][0])
+        let d = data[0][0]
+        let ret = document.querySelectorAll(`[data-label="${d[0]}"][data-group="${d[1]}"][data-x="${d[2]}"][data-y="${d[3]}"]`);
+        console.log(ret)
     }
     plot (groups) {
         var flat = {}
@@ -257,13 +279,37 @@ class AntGroupsCartesian extends AntGroupsPlot {
                 var data = d._groups[0][i].__data__
                 for (var r in data[1][2]) {
                     if (r > 0) {
-                        //console.log(r, data[1][0], data[1][1])
                         ret.push({label: data[1][0], group: data[1][1], datum: data[1][2][r], index: r, universe: data[1][2]})
                     }
                 }
-                //data = [...data[1].slice(0, 2), ...data[1][2]]
             }
             return ret
+        }
+        const me = this;
+        function pointerEnter(e, d) {
+            let dt = [[d.label, d.group, ...d.datum]]
+            if (d.index > 0) {
+                dt.push([d.label, d.group, ...d.universe[d.index-1]])
+            }
+            me.emitEvent.apply(me, ['highlight', [dt]])
+            e.srcElement.classList.add("highlight")
+        }
+        
+        const cScale = this.colorScale
+        function circle(circle) {
+            circle
+                .attr("r", 5)
+                .attr("cx", coordinateX)
+                .attr("cy", coordinateY)
+                .attr("fill", cScale)
+                .attr("fill-opacity", "0.3")
+                .attr("stroke", cScale)
+                .attr("data-group", (d) => d.group)
+                .attr("data-label", (d) => d.label)
+                .attr("data-x", (d) => d.datum[0])
+                .attr("data-y", (d) => d.datum[1])
+                .on("pointerenter pointermoved", pointerEnter)
+            return circle
         }
         this.svg
         .selectAll("g.dataset")
@@ -274,37 +320,18 @@ class AntGroupsCartesian extends AntGroupsPlot {
                     .selectAll("circle")
                     .data(getData(e))
                     .join(
-                    enter => enter.append('circle')
-                        .attr("r", 5)
-                        .attr("cx", coordinateX)
-                        .attr("cy", coordinateY)
-                        .attr("fill", this.colorScale)
-                        .attr("stroke", this.colorScale),
-                    update => update.transition()
-                        .duration(500)
-                        .attr("cx", coordinateX)
-                        .attr("cy", coordinateY)
-                        .attr("fill", this.colorScale)
-                        .attr("stroke", this.colorScale)
+                        enter => circle(enter.append('circle')),
+                        update => circle(update.transition().duration(500))
                     ),
                 u => u.selectAll("circle")
                     .data(getData(u))
                     .join(
-                        enter => enter.append('circle')
-                            .attr("r", 5)
-                            .attr("cx", coordinateX)
-                            .attr("cy", coordinateY)
-                            .attr("fill", this.colorScale)
-                            .attr("stroke", this.colorScale),
-                        update => update.transition()
-                            .duration(500)
-                            .attr("cx", coordinateX)
-                            .attr("cy", coordinateY)
-                            .attr("fill", this.colorScale)
-                            .attr("stroke", this.colorScale)
+                        enter => circle(enter.append('circle')),
+                        update => circle(update)
                     )
-                    
             )
+            
+            
     }
     setupAxis(groups) {
         var all = this.getExtent(groups)
@@ -391,24 +418,43 @@ class AntGroupsLine extends AntGroupsPlot {
         var bb = svg.node().getBoundingClientRect()
         this.height = bb.height;
         this.width = bb.width;
-        this.plot(this.groupData())
-    }
-    handleHiglight() {
-        console.log('line')
-    }
-    plot(groups) {
-        var all = this.getExtent(groups)
-        const scaleX = d3.scalePoint()
+        let groups = this.groupData()
+        let all = this.getExtent(groups)
+        this.scaleX = d3.scalePoint()
             .domain(this.getDomain(groups))
             .range([this.margin, this.width - this.margin]);
 
-        const scaleY = d3.scaleLinear()
+        this.scaleY = d3.scaleLinear()
             .domain(d3.extent(all[1]))
             .range([this.height - this.margin, this.margin])
             .nice();
 
-        const xAxis = d3.axisBottom(scaleX);
-        const yAxis = d3.axisLeft(scaleY);
+        this.plot(groups)
+    }
+    handleHiglight(elements) {
+        //BUG needs to be elements not elements[0]
+        var me = this;
+        function circle(circle) {
+            circle
+                .attr('class', 'highlight')
+                .attr('cx', (d) => me.scaleX(d[2]))
+                .attr('cy', (d) => me.scaleY(d[3]))
+                .attr('fill', me.colorScale)
+                .attr('r', '2')
+
+            return circle
+        }
+        this.svg.selectAll('circle.highlight')
+            .data(elements[0])
+            .join(
+                enter => circle(enter.append('circle')),
+                update => circle(update.transition().duration(250))
+            )
+    }
+    plot(groups) {
+        this.svg.selectAll("circle.highlight").remove()
+        const xAxis = d3.axisBottom(this.scaleX);
+        const yAxis = d3.axisLeft(this.scaleY);
         const axes = this.svg.select("g.axes")
         axes.selectAll(".grid").remove()
         axes.selectAll("g.x-axis")
@@ -440,16 +486,15 @@ class AntGroupsLine extends AntGroupsPlot {
                     .attr("x2", this.width - (this.margin * 2))
                     .attr("stroke-opacity", 0.1)
             )
-        
+        var me = this;
         const line = function (d) {
             var xy = d[d.length - 1]
             var line = d3
                 .line()
-                .x(d => scaleX(d[0]))
-                .y(d => scaleY(d[1]));
+                .x(d => me.scaleX(d[0]))
+                .y(d => me.scaleY(d[1]));
             return line(xy)
         }
-        var me = this
         const tooltip = this.svg.append("g")
 
         function size(text, path) {
@@ -465,18 +510,19 @@ class AntGroupsLine extends AntGroupsPlot {
             if (data == undefined) return;
             tooltip.style("display", null)
             var lineData = data[data.length - 1]
-            var domain = scaleX.domain()
-            var range = scaleX.range();
-            var rangePoints = d3.range(range[0], range[1] + scaleX.step(), scaleX.step())
+            var domain = me.scaleX.domain()
+            var range = me.scaleX.range();
+            var rangePoints = d3.range(range[0], range[1] + me.scaleX.step(), me.scaleX.step())
             const x = d3.bisectCenter(rangePoints, d3.pointer(ev)[0])
             const m = lineData.map((d) => d[0])
             const i = m.indexOf(domain[x])
-            tooltip.attr("transform", `translate(${scaleX(lineData[i][0])},${scaleY(lineData[i][1])})`);
-            me.emitEvent.apply(me, ['highlight', data.slice(0, -1).concat(lineData[i])])
+            tooltip.attr("transform", `translate(${me.scaleX(lineData[i][0])},${me.scaleY(lineData[i][1])})`);
+            const elements = [data.slice(0, -1).concat(lineData[i])]
+            me.emitEvent.apply(me, ['highlight', [elements]])
             if ('callbacks' in me.config && 'plot_tooltip_callback' in me.source.dataset && me.source.dataset['plot_tooltip_callback'] in me.config.callbacks) {
                 
                 const cb = me.config.callbacks[me.source.dataset['plot_tooltip_callback']]
-                const labels = cb.apply(me, data.slice(0, -1).concat(lineData[i]))
+                const labels = cb.apply(me, [elements])
 
                 const path = tooltip.selectAll("path")
                   .data([,])
@@ -600,7 +646,6 @@ class AntGroups {
         let scope = this
         var nav = {}
         let parseLevel = function (group, index, nav) {
-            console.log(group)
             let levelName = levels[index]
             let handler = function(e) {
                 let key = e.target.value
@@ -637,7 +682,6 @@ class AntGroups {
         this.container.appendChild(mcont)
     }
     plot(group, nav) {
-        console.log(nav)
         const cScale = d3.scaleOrdinal(d3.schemeCategory10).domain(group.map(item => item[0] + item[1]).reduce((a, b) => a.indexOf(b) !== -1 ? a : [...a, b], []));
         const colorScale = function (d) {
             if ('datum' in d) {
@@ -723,8 +767,9 @@ class AntParsers {
                 }
                 args.push(fn(grps[grp]))
             }
+            console.log(args)  
             let r = d3.group.apply(this, args)
-            let g = new AntGroups(source, r, config)
+            let g = new AntGroups(source, r, this.config)
             if ('group_id' in source.dataset) {
                 this.groups[source.dataset['group_id']] = g
             }
@@ -749,7 +794,7 @@ class AntParsers {
         element.addEventListener(event, this.eventHandler.bind(this))
     }
 }
-class Ant {
+export class Ant {
     config = null
     constructor(config) {
         const parser = new AntParsers(config)
@@ -763,6 +808,9 @@ class Ant {
         let ret = document.querySelectorAll('[data-on]');
         for (let i = 0; i < ret.length; i++) {
             if (ret[i].dataset['on']) {
+                if (ret[i].dataset['on'] == 'load') {
+                    this.parser.parseElement(ret[i])
+                }
                 this.parser.addEventListener(ret[i], ret[i].dataset['on'])
             }
         }
