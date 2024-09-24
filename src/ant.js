@@ -56,14 +56,21 @@ class AntGroupsPlot {
     }
     groupData() {
         let r = [this.source.dataset['plot_label']].concat(this.source.dataset['plot_x'].split(',').slice(0, -1))
+        let cb = this.source.dataset['plot_xy_callback']
         let xCol = this.source.dataset['plot_x'].split(',').slice(-1)
         let yCol = this.source.dataset['plot_y']
+        let me = this
         function rollup (sequences) { 
             let x = [], y = [], xy = []
             for (let i in sequences) {
-                x.push(sequences[i][xCol])
-                y.push(sequences[i][yCol])
-                xy.push ([sequences[i][xCol], sequences[i][yCol]])
+                if (cb !== undefined) {
+                    const cfn = me.config.callbacks[cb]
+                    xy = cfn.apply(me, [sequences[i]])
+                } else {
+                    x.push(sequences[i][xCol])
+                    y.push(sequences[i][yCol])
+                    xy.push ([sequences[i][xCol], sequences[i][yCol]])
+                }
             }
             return xy
         }
@@ -682,6 +689,7 @@ class AntGroups {
         this.container.appendChild(mcont)
     }
     plot(group, nav) {
+        console.log(group)
         const cScale = d3.scaleOrdinal(d3.schemeCategory10).domain(group.map(item => item[0] + item[1]).reduce((a, b) => a.indexOf(b) !== -1 ? a : [...a, b], []));
         const colorScale = function (d) {
             if ('datum' in d) {
