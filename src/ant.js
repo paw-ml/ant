@@ -65,13 +65,12 @@ class AntGroupsPlot {
             for (let i in sequences) {
                 if (cb !== undefined) {
                     const cfn = me.config.callbacks[cb]
-                    xy = cfn.apply(me, [sequences[i]])
+                    xy[i] = {xy: cfn.apply(me, [sequences[i]]), element: sequences[i]}
                 } else {
-                    x.push(sequences[i][xCol])
-                    y.push(sequences[i][yCol])
-                    xy.push ([sequences[i][xCol], sequences[i][yCol]])
+                    xy[i] = {xy: ([sequences[i][xCol], sequences[i][yCol]]), element: sequences[i]}
                 }
             }
+            console.log (sequences, xy)
             return xy
         }
         let args = this.getArgs(this.group, r, rollup)
@@ -96,15 +95,24 @@ class AntGroupsPlot {
 
         }
         let unique = [... new Set(vals)].sort()
+        console.log(unique)
         return unique
     }
-    getExtent(groups) {
+    getExtent(groups, xInt=true) {
         let allX = [], allY = []
         for (let g in groups) {
             let grp = groups[g], col = grp[grp.length - 1]
-            var extX = d3.extent(col, d => parseInt(d[0]))
-            var extY = d3.extent(col, d => parseInt(d[1]))
-            
+            console.log(col)
+            function cb (seq, idx, intg) {
+                var ret = []
+                for (var i in seq) {
+                    ret.push(d3.extent(seq[i].xy, d => intg ? parseInt(d[idx]) : d[idx] ).flat())
+                }
+                return ret.flat()
+            }
+            var extX = d3.extent(cb(col, 0, xInt))
+            var extY = d3.extent(cb(col, 1, false))
+            console.log(extY)
             allX.push(extX[0])
             allX.push(extX[1])
             allY.push(extY[0])
@@ -203,27 +211,40 @@ class AntGroupsLabels extends AntGroupsPlot {
         this.source = source
         this.group = group
         this.container = container
+        this.container.classList.add("level")
         this.config = config
         this.colorScale = colorScale
     }
     handleHiglight(data) {
-        if ('plot_tooltip_callback' in this.source.dataset) {
-            const cb = this.config.callbacks[this.source.dataset['plot_tooltip_callback']]
-            const rows = cb.apply(this, data)
-            this.container.replaceChildren();
-            for (var r in rows) {
-                let div = document.createElement('DIV')
-                div.classList.add('element')
-                for (let l in rows[r]) {
-                    let label = document.createElement('DIV')
-                    label.classList.add('label')
-                    label.setHTMLUnsafe('<span>' + rows[r][l][0] + ':</span>' + rows[r][l][1])
-                    div.appendChild(label)
-                }
-                this.container.appendChild(div)
-            }
+        this.container.replaceChildren()
 
+        function elm(x, y) {
+            let item = document.createElement('DIV')
+            item.classList.add(...['level-item', 'has-text-centered'])
+            let box = document.createElement('DIV')
+            item.appendChild(box)
+
+            let head = document.createElement('P')
+            head.classList.add('heading')
+            head.innerText = x
+            box.appendChild(head)
+
+            let title = document.createElement('P')
+            title.classList.add('title')
+            title.innerText = y
+            box.appendChild(title)
+            return item
         }
+        var [element, idx, [x, y]] = data
+        for (var lbl in element.element) {
+            if (typeof element.element[lbl] !== "object") {
+                this.container.appendChild(elm(lbl, element.element[lbl]))
+            }
+        }
+        this.container.appendChild(elm("X", x))
+        this.container.appendChild(elm("Value", y))
+        console.log (idx, x, y)
+
     }
 }
 class AntGroupsCartesian extends AntGroupsPlot {
@@ -253,10 +274,8 @@ class AntGroupsCartesian extends AntGroupsPlot {
     }
     handleHighlight(data) {
         this.svg.selectAll(".highlight").classed("highlight", false)
-        console.log(data[0][0])
         let d = data[0][0]
-        let ret = document.querySelectorAll(`[data-label="${d[0]}"][data-group="${d[1]}"][data-x="${d[2]}"][data-y="${d[3]}"]`);
-        console.log(ret)
+        let ret = document.querySelectorAll(`[data-label="${d[0]}"][data-group="${d[1]}"][data-x="${d[2]}"][data-y="${d[3]}"]`)
     }
     plot (groups) {
         var flat = {}
@@ -426,9 +445,15 @@ class AntGroupsLine extends AntGroupsPlot {
         this.height = bb.height;
         this.width = bb.width;
         let groups = this.groupData()
-        let all = this.getExtent(groups)
-        this.scaleX = d3.scalePoint()
-            .domain(this.getDomain(groups))
+        let xScale = "plot_x_scale" in this.source.dataset ? this.source.dataset["plot_x_scale"] : "scalePoint"
+        let notInteger = ["scaleTime"]
+        let all = this.getExtent(groups, xScale in notInteger)
+        let domainCb = {
+            "scaleTime": (d) => { return all[0] }
+        }
+        let getDomain = "plot_x_scale" in this.source.dataset && this.source.dataset["plot_x_scale"] in domainCb ? domainCb[this.source.dataset["plot_x_scale"]] : this.getDomain 
+        this.scaleX = d3[xScale]()
+            .domain(getDomain(groups))
             .range([this.margin, this.width - this.margin]);
 
         this.scaleY = d3.scaleLinear()
@@ -436,27 +461,34 @@ class AntGroupsLine extends AntGroupsPlot {
             .range([this.height - this.margin, this.margin])
             .nice();
 
+        this.rule = svg.append("g")
+            .append("line")
+            .attr("y1", this.height - this.margin)
+            .attr("y2", this.margin)
+            .attr("stroke", "black");
         this.plot(groups)
     }
-    handleHiglight(elements) {
+    handleHiglight(series) {
         //BUG needs to be elements not elements[0]
-        var me = this;
+        var me = this
         function circle(circle) {
             circle
                 .attr('class', 'highlight')
-                .attr('cx', (d) => me.scaleX(d[2]))
-                .attr('cy', (d) => me.scaleY(d[3]))
-                .attr('fill', me.colorScale)
+                .attr('cx', (d) => me.scaleX(d[2][0]))
+                .attr('cy', (d) => me.scaleY(d[2][1]))
+                //.attr('fill', me.colorScale)
                 .attr('r', '2')
 
             return circle
         }
         this.svg.selectAll('circle.highlight')
-            .data(elements[0])
+            .data([series])
             .join(
                 enter => circle(enter.append('circle')),
-                update => circle(update.transition().duration(250))
+                update => circle(update)
             )
+        this.rule
+            .attr("transform", `translate(${this.scaleX(series[2][0]) + 0.5},0)`)
     }
     plot(groups) {
         this.svg.selectAll("circle.highlight").remove()
@@ -495,7 +527,7 @@ class AntGroupsLine extends AntGroupsPlot {
             )
         var me = this;
         const line = function (d) {
-            var xy = d[d.length - 1]
+            var xy = d.xy
             var line = d3
                 .line()
                 .x(d => me.scaleX(d[0]))
@@ -511,53 +543,19 @@ class AntGroupsLine extends AntGroupsPlot {
         }
         function pointerLeft() {
             tooltip.style("display", "none");
-          }
-
-        function pointerMoved(ev, data) {
-            if (data == undefined) return;
-            tooltip.style("display", null)
-            var lineData = data[data.length - 1]
-            var domain = me.scaleX.domain()
-            var range = me.scaleX.range();
-            var rangePoints = d3.range(range[0], range[1] + me.scaleX.step(), me.scaleX.step())
-            const x = d3.bisectCenter(rangePoints, d3.pointer(ev)[0])
-            const m = lineData.map((d) => d[0])
-            const i = m.indexOf(domain[x])
-            tooltip.attr("transform", `translate(${me.scaleX(lineData[i][0])},${me.scaleY(lineData[i][1])})`);
-            const elements = [data.slice(0, -1).concat(lineData[i])]
-            me.emitEvent.apply(me, ['highlight', [elements]])
-            if ('callbacks' in me.config && 'plot_tooltip_callback' in me.source.dataset && me.source.dataset['plot_tooltip_callback'] in me.config.callbacks) {
-                
-                const cb = me.config.callbacks[me.source.dataset['plot_tooltip_callback']]
-                const labels = cb.apply(me, [elements])
-
-                const path = tooltip.selectAll("path")
-                  .data([,])
-                  .join("path")
-                    .attr("fill", "white")
-                    .attr("stroke", "black");
-            
-                const text = tooltip.selectAll("text")
-                  .data([,])
-                  .join("text")
-                  .call(text => text
-                                .selectAll("tspan")
-                                .data(labels)
-                                .join("tspan")
-                                    .attr("x", 0)
-                                    .attr("y", (_, i) => `${i * 1.1}em`)
-                                    .attr("font-weight", (_, i) => i ? null : "bold")
-                                    .attr("font-size", "x-small")
-                                    .text(d => d[1])
-                    )
-
-                size(text, path)
-            }
         }
+        function pointerMoved(ev, series) {
+            var data = series.xy
+            const points = data.map(([x, y]) => [me.scaleX(x), me.scaleY(y)])
 
+            const [xm, ym] = d3.pointer(ev);
+            const i = d3.leastIndex(points, ([x, y]) => Math.hypot(x - xm, y - ym));
+            me.emitEvent.apply(me, ['highlight', [series, i, series.xy[i]]])
+        }
+        var series = groups.map((d) => d[d.length -1]).flat()
         this.svg
         .selectAll("path.dataset")
-            .data(groups.values())
+            .data(series)
             .join(
                 enter => enter.append('path')
                     .attr("class", "dataset")
@@ -571,7 +569,7 @@ class AntGroupsLine extends AntGroupsPlot {
             )
         .on("pointerenter pointermove", pointerMoved)
 
-
+        console.log(groups)
         this.svg
         .on("pointerleave", pointerLeft)
     }
@@ -689,13 +687,14 @@ class AntGroups {
         this.container.appendChild(mcont)
     }
     plot(group, nav) {
-        console.log(group)
         const cScale = d3.scaleOrdinal(d3.schemeCategory10).domain(group.map(item => item[0] + item[1]).reduce((a, b) => a.indexOf(b) !== -1 ? a : [...a, b], []));
         const colorScale = function (d) {
+            console.log(d)
             if ('datum' in d) {
                 return cScale(d.label + d.group)
             } else {
-                return cScale(d[0] + d[1])
+                //TODO: 
+                return cScale(d.element)
             }
         }
         const plotTypes = {"line": AntGroupsLine, "cartesian": AntGroupsCartesian, "labels": AntGroupsLabels, "pivot": AntGroupsPivot}
@@ -774,8 +773,7 @@ class AntParsers {
                     return function(d) { return d[grp] }
                 }
                 args.push(fn(grps[grp]))
-            }
-            console.log(args)  
+            }  
             let r = d3.group.apply(this, args)
             let g = new AntGroups(source, r, this.config)
             if ('group_id' in source.dataset) {
