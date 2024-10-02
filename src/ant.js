@@ -70,7 +70,6 @@ class AntGroupsPlot {
                     xy[i] = {xy: ([sequences[i][xCol], sequences[i][yCol]]), element: sequences[i]}
                 }
             }
-            console.log (sequences, xy)
             return xy
         }
         let args = this.getArgs(this.group, r, rollup)
@@ -95,14 +94,12 @@ class AntGroupsPlot {
 
         }
         let unique = [... new Set(vals)].sort()
-        console.log(unique)
         return unique
     }
     getExtent(groups, xInt=true) {
         let allX = [], allY = []
         for (let g in groups) {
             let grp = groups[g], col = grp[grp.length - 1]
-            console.log(col)
             function cb (seq, idx, intg) {
                 var ret = []
                 for (var i in seq) {
@@ -112,7 +109,6 @@ class AntGroupsPlot {
             }
             var extX = d3.extent(cb(col, 0, xInt))
             var extY = d3.extent(cb(col, 1, false))
-            console.log(extY)
             allX.push(extX[0])
             allX.push(extX[1])
             allY.push(extY[0])
@@ -236,13 +232,15 @@ class AntGroupsLabels extends AntGroupsPlot {
             return item
         }
         var [element, idx, [x, y]] = data
+
+        this.container.appendChild(elm("X", x))
+        this.container.appendChild(elm("Value", y))
+
         for (var lbl in element.element) {
             if (typeof element.element[lbl] !== "object") {
                 this.container.appendChild(elm(lbl, element.element[lbl]))
             }
         }
-        this.container.appendChild(elm("X", x))
-        this.container.appendChild(elm("Value", y))
         console.log (idx, x, y)
 
     }
@@ -444,7 +442,20 @@ class AntGroupsLine extends AntGroupsPlot {
         var bb = svg.node().getBoundingClientRect()
         this.height = bb.height;
         this.width = bb.width;
+        
         let groups = this.groupData()
+        this.scales (groups)
+
+        this.rule = svg.append("g")
+            .append("line")
+            .attr("y1", this.height - this.margin)
+            .attr("y2", this.margin)
+            .attr("stroke", "black");
+
+
+        this.plot(groups)
+    }
+    scales (groups) {
         let xScale = "plot_x_scale" in this.source.dataset ? this.source.dataset["plot_x_scale"] : "scalePoint"
         let notInteger = ["scaleTime"]
         let all = this.getExtent(groups, xScale in notInteger)
@@ -452,6 +463,7 @@ class AntGroupsLine extends AntGroupsPlot {
             "scaleTime": (d) => { return all[0] }
         }
         let getDomain = "plot_x_scale" in this.source.dataset && this.source.dataset["plot_x_scale"] in domainCb ? domainCb[this.source.dataset["plot_x_scale"]] : this.getDomain 
+
         this.scaleX = d3[xScale]()
             .domain(getDomain(groups))
             .range([this.margin, this.width - this.margin]);
@@ -460,13 +472,6 @@ class AntGroupsLine extends AntGroupsPlot {
             .domain(d3.extent(all[1]))
             .range([this.height - this.margin, this.margin])
             .nice();
-
-        this.rule = svg.append("g")
-            .append("line")
-            .attr("y1", this.height - this.margin)
-            .attr("y2", this.margin)
-            .attr("stroke", "black");
-        this.plot(groups)
     }
     handleHiglight(series) {
         //BUG needs to be elements not elements[0]
@@ -490,6 +495,19 @@ class AntGroupsLine extends AntGroupsPlot {
         this.rule
             .attr("transform", `translate(${this.scaleX(series[2][0]) + 0.5},0)`)
     }
+    line () {
+        var me = this
+        return function(d) {
+            var xy = d.xy
+            var ln = d3
+                .line()
+                .x(d => me.scaleX(d[0]))
+                .y(d => me.scaleY(d[1]))
+                .curve(d3.curveCatmullRom.alpha(0.5))
+    
+            return ln(xy)
+        }
+    }
     plot(groups) {
         this.svg.selectAll("circle.highlight").remove()
         const xAxis = d3.axisBottom(this.scaleX);
@@ -507,6 +525,7 @@ class AntGroupsLine extends AntGroupsPlot {
                     .duration(500)
                     .call(xAxis)
             )
+        
         axes.selectAll("g.y-axis")
             .data([true])
             .join(
@@ -526,23 +545,9 @@ class AntGroupsLine extends AntGroupsPlot {
                     .attr("stroke-opacity", 0.1)
             )
         var me = this;
-        const line = function (d) {
-            var xy = d.xy
-            var line = d3
-                .line()
-                .x(d => me.scaleX(d[0]))
-                .y(d => me.scaleY(d[1]));
-            return line(xy)
-        }
-        const tooltip = this.svg.append("g")
-
-        function size(text, path) {
-            const {x, y, width: w, height: h} = text.node().getBBox();
-            text.attr("transform", `translate(${-w / 2},${10 - y})`);
-            path.attr("d", `M${-w / 2 - 5},5H-5l5,-5l5,5H${w / 2 + 5}v${h + 10}h-${w + 10}z`);
-        }
+        
         function pointerLeft() {
-            tooltip.style("display", "none");
+            //tooltip.style("display", "none");
         }
         function pointerMoved(ev, series) {
             var data = series.xy
@@ -559,17 +564,15 @@ class AntGroupsLine extends AntGroupsPlot {
             .join(
                 enter => enter.append('path')
                     .attr("class", "dataset")
-                    .attr("d", line)
+                    .attr("d", this.line())
                     .attr("fill", "none")
                     .attr("stroke", this.colorScale),
                 update => update.transition()
                     .duration(500)
-                    .attr("d", line)
+                    .attr("d", this.line())
                     .attr("stroke", this.colorScale)
             )
         .on("pointerenter pointermove", pointerMoved)
-
-        console.log(groups)
         this.svg
         .on("pointerleave", pointerLeft)
     }
@@ -577,7 +580,99 @@ class AntGroupsLine extends AntGroupsPlot {
         
     }
 }
+class AntGroupsLineCumsum extends AntGroupsLine {
+    group = null
+    container = null
+    source =null
+    width = 1000
+    height = 500
+    margin = 60
+    config = null;
+    constructor(source, plotContainer, svg, group, colorScale, config, eventsManager) {
+    
+        super(source, plotContainer, svg, group, colorScale, config, eventsManager)
+        this.container = plotContainer
+        this.config = config
+        this.group = group
+        this.source = source
+        this.svg = svg
+        this.colorScale = colorScale
+       
+        
 
+    }
+    /*
+    getExtent(groups, xInt=true) {
+        let allX = [], allY = []
+        for (let g in groups) {
+            let grp = groups[g], col = grp[grp.length - 1]
+            function cb (seq, idx, intg) {
+                var ret = []
+                for (var i in seq) {
+                    ret.push(d3.extent(seq[i].xy, d => intg ? parseInt(d[idx]) : d[idx] ).flat())
+                }
+                return ret.flat()
+            }
+            function cs (seq) {
+                var ret = []
+                for (var i in seq) {
+                    ret.push(d3.extent(seq[i].xy, d => d3.cumsum(d, a => a[1])))
+                }
+
+                return ret.flat()
+            }
+            var extX = d3.extent(cb(col, 0, xInt))
+            var extY = d3.extent(cs(col))
+            allX.push(extX[0])
+            allX.push(extX[1])
+            allY.push(extY[0])
+            allY.push(extY[1])
+        }
+        return [allX, allY]
+    }*/
+    scales (groups) {
+        super.scales(groups)
+
+        let max = 0
+        for (let g in groups) {
+            let grp = groups[g], col = grp[grp.length - 1]
+            console.log(col)
+            for (let c in col) {
+                let m = d3.cumsum(col[c].xy, a => a[1])[col[c].xy.length - 1]
+                max = m > max ? m : max
+            }
+        }
+
+        this.scaleY = d3.scaleLinear()
+            .domain([0, max])
+            .range([this.height - this.margin, this.margin])
+            .nice();
+
+        console.log(this.scaleY.domain())
+    }
+    line () {
+        var me = this
+        return function(d) {
+            var xy = d.xy
+            function getY(d, i, c) {
+                if (i > 0) {
+                    let y = d3.cumsum(c.slice(0, i), a => a[1])
+                    return me.scaleY(y[i - 1])
+                }
+                return me.scaleY(0)
+            }
+            var ln = d3
+                .line()
+                .x(d=> me.scaleX(d[0]))
+                .y(getY)
+                .curve(d3.curveCatmullRom.alpha(0.5))
+            
+            console.log(me.scaleY.domain())
+    
+            return ln(xy)
+        }
+    }
+}
 class AntGroups {
     source = null;
     container = null;
@@ -697,7 +792,10 @@ class AntGroups {
                 return cScale(d.element)
             }
         }
-        const plotTypes = {"line": AntGroupsLine, "cartesian": AntGroupsCartesian, "labels": AntGroupsLabels, "pivot": AntGroupsPivot}
+        const plotTypes = {
+            "line": AntGroupsLine, "cartesian": AntGroupsCartesian, "labels": AntGroupsLabels, "pivot": AntGroupsPivot,
+            "cumsum": AntGroupsLineCumsum
+        }
         if ('plot' in this.source.dataset && 'plot_x' in this.source.dataset && 'plot_y' in this.source.dataset) {
             var plots = this.source.dataset['plot'].split(',')
             for (var p in plots) {
